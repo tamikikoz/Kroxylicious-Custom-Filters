@@ -1,0 +1,65 @@
+# Kroxylicious config for Cluster A (region-1)
+#
+# On cluster A, the local topic is "topic-a" and the mirror from region-2 is
+# "B.topic-a". The name "A.topic-a" does NOT exist here (it's the mirror name
+# on cluster B), so we suppress it.
+#
+# Pick whichever approach suits your needs:
+
+# --- Option 1: deny specific topic ---
+# filterDefinitions:
+#   - name: suppress-invalid-topic
+#     type: TopicSuppression
+#     config:
+#       denyTopics:
+#         - "A.topic-a"
+
+# --- Option 2: deny all A-prefixed mirrors by regex ---
+# filterDefinitions:
+#   - name: suppress-invalid-topic
+#     type: TopicSuppression
+#     config:
+#       denyPatterns:
+#         - "^A\\..*"
+
+# --- Option 3: allowlist only valid topics by name ---
+# filterDefinitions:
+#   - name: suppress-invalid-topic
+#     type: TopicSuppression
+#     config:
+#       allowTopics:
+#         - "topic-a"
+#         - "B.topic-a"
+
+# --- Option 4: allow by pattern + deny specific topics ---
+filterDefinitions:
+  - name: suppress-invalid-topic
+    type: TopicSuppression
+    config:
+      allowPatterns:
+        - "^topic-.*"
+        - "^B\\..*"
+      denyTopics:
+        - "A.topic-a"
+
+adminHttp:
+  endpoints:
+    prometheus: {}
+
+virtualClusters:
+  my-cluster:
+    targetCluster:
+      bootstrap_servers: kafka-cluster-a-bootstrap:9092
+    clusterNetworkAddressConfigProvider:
+      type: SniRoutingClusterNetworkAddressConfigProvider
+      config:
+        bootstrapAddress: kafka.example.com:9092
+        brokerAddressPattern: broker-$(nodeId).kafka.example.com
+    tls:
+      key:
+        storeFile: /opt/kroxylicious/tls/tls.p12
+        storePassword:
+          passwordFile: /opt/kroxylicious/tls/store-password
+        storeType: PKCS12
+    filters:
+      - suppress-invalid-topic

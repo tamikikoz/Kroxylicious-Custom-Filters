@@ -1,0 +1,82 @@
+stages:
+  - build
+  - test
+  - package
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+  IMAGE_NAME: "${CI_REGISTRY_IMAGE}/kroxylicious-custom"
+
+cache:
+  key: maven-cache
+  paths:
+    - .m2/repository
+
+# Runs on every push — builds all filter JARs
+build-jars:
+  stage: build
+  image: maven:3.9-eclipse-temurin-17
+  script:
+    - |
+      for pom in */pom.xml; do
+        dir=$(dirname "$pom")
+        echo "=== Building $dir ==="
+        mvn -f "$pom" clean package -DskipTests
+      done
+    - mkdir -p jars
+    - find . -path '*/target/*.jar' -not -name '*-sources.jar' -not -name '*-javadoc.jar' -exec cp {} jars/ \;
+    - ls -lh jars/
+  artifacts:
+    paths:
+      - jars/
+    expire_in: 1 hour
+
+# Runs on every push — tests all filters
+test:
+  stage: test
+  image: maven:3.9-eclipse-temurin-17
+  script:
+    - |
+      for pom in */pom.xml; do
+        dir=$(dirname "$pom")
+        echo "=== Testing $dir ==="
+        mvn -f "$pom" test
+      done
+
+# Feature/MR branches — build + test only, no image
+# (handled by the jobs above with no rules, so they run on all branches)
+
+# develop branch — pushes a staging image
+build-image-staging:
+  stage: package
+  image: docker:latest
+  services:
+    - docker:dind
+  needs:
+    - build-jars
+    - test
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker build -t "${IMAGE_NAME}:staging" -t "${IMAGE_NAME}:staging-${CI_COMMIT_SHORT_SHA}" .
+    - docker push "${IMAGE_NAME}:staging"
+    - docker push "${IMAGE_NAME}:staging-${CI_COMMIT_SHORT_SHA}"
+
+# Tagged release on main — pushes a versioned production image
+build-image-release:
+  stage: package
+  image: docker:latest
+  services:
+    - docker:dind
+  needs:
+    - build-jars
+    - test
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  script:
+    - VERSION="${CI_COMMIT_TAG#v}"
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker build -t "${IMAGE_NAME}:${VERSION}" -t "${IMAGE_NAME}:latest" .
+    - docker push "${IMAGE_NAME}:${VERSION}"
+    - docker push "${IMAGE_NAME}:latest"
