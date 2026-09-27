@@ -7,7 +7,7 @@ import io.kroxylicious.proxy.plugin.Plugin;
 import io.kroxylicious.proxy.plugin.PluginConfigurationException;
 
 @Plugin(configType = TopicSuppressionFilterConfig.class)
-public class TopicSuppressionFilterFactory
+public class TopicSuppression
         implements FilterFactory<TopicSuppressionFilterConfig, TopicSuppressionFilterConfig> {
 
     @Override

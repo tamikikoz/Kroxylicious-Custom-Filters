@@ -42,24 +42,24 @@ filterDefinitions:
       denyTopics:
         - "A.topic-a"
 
-adminHttp:
+management:
   endpoints:
     prometheus: {}
 
 virtualClusters:
-  my-cluster:
+  - name: my-cluster
     targetCluster:
-      bootstrap_servers: kafka-cluster-a-bootstrap:9092
-    clusterNetworkAddressConfigProvider:
-      type: SniRoutingClusterNetworkAddressConfigProvider
-      config:
-        bootstrapAddress: kafka.example.com:9092
-        brokerAddressPattern: broker-$(nodeId).kafka.example.com
-    tls:
-      key:
-        storeFile: /opt/kroxylicious/tls/tls.p12
-        storePassword:
-          passwordFile: /opt/kroxylicious/tls/store-password
-        storeType: PKCS12
+      bootstrapServers: kafka-cluster-a-bootstrap:9092
+    gateways:
+      - name: default
+        sniHostIdentifiesNode:
+          bootstrapAddress: kafka.example.com:9092
+          advertisedBrokerAddressPattern: broker-$(nodeId).kafka.example.com
+        tls:
+          key:
+            storeFile: /opt/kroxylicious/tls/tls.p12
+            storePassword:
+              passwordFile: /opt/kroxylicious/tls/store-password
+            storeType: PKCS12
     filters:
       - suppress-invalid-topic

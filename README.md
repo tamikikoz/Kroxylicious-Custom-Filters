@@ -1,163 +1,101 @@
-# Kroxylicious Topic Suppression Filter
+# Kroxylicious Custom Filters
 
-A Kroxylicious (v0.24.0) filter that strips configured topic names from
-`MetadataRequest` messages before they reach the backend Kafka cluster. This
-prevents kafkajs consumers with static topic subscriptions from crashing with
-`UNKNOWN_TOPIC_OR_PARTITION` when a topic name exists only on the other
-cluster in a MirrorMaker 2 bidirectional replication setup.
+Custom [Kroxylicious](https://kroxylicious.io/) filter plugins, built against
+`kroxylicious-api` v0.24.0. Each filter is a self-contained, standalone Maven
+project living in its own top-level folder — its own `pom.xml`, source, tests,
+examples, and README.
+
+## Repo layout convention
+
+```
+<filter-name>/
+├── README.md          <- filter-specific: what it does, config reference, usage
+├── pom.xml
+├── src/
+│   ├── main/java/...
+│   └── test/java/...
+├── examples/           <- complete example proxy-config.yaml snippets (optional)
+└── ...                 <- anything else specific to that filter (integration
+                            tests, design spec, etc.)
+```
+
+Adding a new filter means adding a new top-level folder in this same shape —
+nothing else in this repo needs to change to pick it up (see CI, below).
+
+## Filters in this repo
+
+- [`topic-suppression/`](topic-suppression/README.md) — strips configured
+  topic names from `MetadataRequest`s, so kafkajs clients with static topic
+  subscriptions never see `UNKNOWN_TOPIC_OR_PARTITION` for a topic that only
+  exists on the other side of a MirrorMaker 2 bidirectional replication setup.
 
 ## Build
 
+Every filter builds independently:
+
 ```bash
+cd <filter-name>
 mvn clean package
 ```
 
-The resulting JAR is at `target/topic-suppression-filter-1.0.0-SNAPSHOT.jar`.
+The CI (`.gitlab-ci.yml`) builds and tests **every** top-level folder with a
+`pom.xml` automatically (`for pom in */pom.xml`) — no per-filter CI config
+needed.
 
 ## Deploy
 
-Copy the JAR into your Kroxylicious plugin directory (typically
-`/opt/kroxylicious/plugins/` or wherever your deployment's classpath is
-configured).
+All filters here are loaded via Kroxylicious's `classpath-plugins` mechanism
+(explicitly labelled "Alpha" by the Kroxylicious project — it may change in a
+future release). The proxy's startup script only scans **subdirectories** of
+`/opt/kroxylicious/classpath-plugins/`, adding each one's contents to the
+classpath — a jar dropped directly in `classpath-plugins/` with no
+subdirectory is silently never loaded:
 
-## Configuration
+```
+/opt/kroxylicious/classpath-plugins/<filter-name>/<filter-name>-*.jar
+```
 
-The filter has four optional fields — use any combination:
+Confirm a plugin loaded by checking for the Alpha warning (and the absence of
+an "Unknown plugin instance" error) at proxy startup:
 
-| Field | Type | Description |
-|---|---|---|
-| `denyTopics` | `List<String>` | Exact topic names to suppress |
-| `denyPatterns` | `List<String>` | Java regex patterns — topics matching any pattern are suppressed (full match) |
-| `allowTopics` | `List<String>` | Exact topic names to allow through |
-| `allowPatterns` | `List<String>` | Java regex patterns — only topics matching a pattern are let through (full match) |
+```bash
+docker logs <container> | grep -i "classpath-plugins"
+```
 
-### Evaluation logic
+`Dockerfile` here builds an image with **every** filter's jar baked in
+(`COPY jars/*.jar /opt/kroxylicious/classpath-plugins/custom-filters/`) —
+built by the CI's `build-jars` stage, which collects every filter's jar into
+a shared `jars/` directory first. If you only want one specific filter in
+your deployment, mount its jar individually instead of using this image as-is.
 
-A topic is **suppressed** (removed from the MetadataRequest) if:
-- It matches any **deny** rule (exact name or regex), **OR**
-- Allow rules are configured and it does **not** match any **allow** rule
+## Wiring a filter into your Kroxylicious config
 
-Deny takes precedence: a topic matching both a deny and an allow rule is suppressed.
-
-If no rules are configured, the filter is a no-op.
-
-### Examples
-
-**Deny specific topics** per cluster:
+Every filter follows the same two-step pattern — see each filter's own
+README for its specific `type:` name and config fields:
 
 ```yaml
 filterDefinitions:
-  - name: suppress-invalid-topic
-    type: TopicSuppression
+  - name: my-filter-instance
+    type: <FilterName>
     config:
-      denyTopics:
-        - "A.topic-a"
-```
+      # filter-specific config - see that filter's README
 
-**Deny by regex** — suppress all mirror-prefixed topics from a region:
-
-```yaml
-filterDefinitions:
-  - name: suppress-invalid-topic
-    type: TopicSuppression
-    config:
-      denyPatterns:
-        - "^A\\..*"
-```
-
-**Allowlist by exact names**:
-
-```yaml
-filterDefinitions:
-  - name: suppress-invalid-topic
-    type: TopicSuppression
-    config:
-      allowTopics:
-        - "topic-a"
-        - "B.topic-a"
-```
-
-**Allowlist by pattern**:
-
-```yaml
-filterDefinitions:
-  - name: suppress-invalid-topic
-    type: TopicSuppression
-    config:
-      allowPatterns:
-        - "^topic-.*"
-        - "^B\\..*"
-```
-
-**Combined deny + allow**:
-
-```yaml
-filterDefinitions:
-  - name: suppress-invalid-topic
-    type: TopicSuppression
-    config:
-      denyPatterns:
-        - "^A\\..*"
-      allowPatterns:
-        - "^topic-.*"
-        - "^[AB]\\.topic-.*"
-```
-
-Then reference the filter in your virtual cluster:
-
-```yaml
 virtualClusters:
-  my-cluster:
+  - name: my-cluster
+    # ...existing targetCluster / gateways / tls unchanged...
     filters:
-      - suppress-invalid-topic
-    # ... existing targetCluster / TLS config unchanged
+      - my-filter-instance
 ```
 
-See `examples/` for complete config files.
+## Contributing a new filter
 
-## How it works
-
-1. The filter intercepts only `MetadataRequest` messages (all API versions).
-2. If the request contains an explicit topics list, each topic is evaluated
-   against the deny/allow rules and removed if suppressed.
-3. If the request is an "all topics" request (`topics: null`), it passes
-   through unmodified — the broker's own catalog naturally excludes
-   non-existent topics.
-4. No other request types are touched. The consumer will never be assigned
-   partitions for a topic it never received metadata for.
-
-## Known open risk — validate before production
-
-**You must run the integration test described in the spec (§6) before
-deploying to production.** The critical assumption is that kafkajs's partition
-assignor gracefully treats "subscribed topic with zero known partitions" as
-"contribute zero partitions, proceed normally." If instead something throws
-when partition metadata is absent for a subscribed topic, this approach does
-not work.
-
-Test plan summary:
-
-1. Run Kroxylicious with this filter suppressing a genuinely non-existent topic.
-2. Connect a kafkajs consumer (matching your production version) with the
-   static three-topic array through the filtered proxy, in a **single-member**
-   consumer group (guaranteeing leader election).
-3. Verify: consumer starts, no crash, correct partition assignments for valid topics.
-4. Force a rejoin (bounce the connection) and verify the same clean behavior.
-5. Repeat with a **multi-member** group.
-
-## Deployment checklist
-
-- [ ] Ensure deny/allow rules are set differently per cluster — deploying
-      the same config to both regions will suppress a valid topic on one side.
-- [ ] Confirm `allowAutoTopicCreation: false` on the kafkajs client config
-      (defense in depth — ACLs alone are not sufficient).
-- [ ] Run the §6 integration test against your actual kafkajs version.
-- [ ] Monitor consumer group lag after deployment to confirm consumption
-      is healthy.
-
-## Limitations
-
-- MM2 checkpoint offset-continuity asymmetry is not addressed by this filter.
-- Rules are static; adding/renaming mirrored topics requires a config update
-  and Kroxylicious restart (regex patterns reduce this burden).
-- Tied to Kroxylicious v0.24.0 API; may need adjustment on upgrade.
+1. New top-level folder, matching the layout convention above.
+2. Standalone Maven project depending on `kroxylicious-api` (`provided`
+   scope — it's already on the proxy's runtime classpath, don't bundle it).
+3. `FilterFactory` implementation named to match its intended `type:` value
+   directly (e.g. a class named `MyFilter`, not `MyFilterFactory`) —
+   matches Kroxylicious's own convention (`Authorization`, `ProtocolLogger`,
+   etc. — no `Filter`/`FilterFactory` suffix on any of their built-in ones).
+4. `@Plugin(configType = ...)` on the factory class, `META-INF/services/io.kroxylicious.proxy.filter.FilterFactory`
+   registering it.
+5. A filter-specific README covering config reference and usage.

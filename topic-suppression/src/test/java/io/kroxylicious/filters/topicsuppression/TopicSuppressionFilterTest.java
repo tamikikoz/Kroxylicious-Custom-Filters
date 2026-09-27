@@ -220,7 +220,7 @@ class TopicSuppressionFilterTest {
 
         @Test
         void factoryCreatesWorkingFilter() {
-            TopicSuppressionFilterFactory factory = new TopicSuppressionFilterFactory();
+            TopicSuppression factory = new TopicSuppression();
             var cfg = config(List.of("A.topic-a"), null, null, null);
             var init = factory.initialize(null, cfg);
             assertThat(init).isSameAs(cfg);
