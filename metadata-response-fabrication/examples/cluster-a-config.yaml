@@ -1,0 +1,38 @@
+# Kroxylicious config for Cluster A (region-1)
+#
+# On cluster A, the local topic is "topic-a" and the mirror from region-2 is
+# "B.topic-a". The name "A.topic-a" does NOT exist here — it's the mirror name
+# on cluster B. To make kafkajs regex subscriptions capture both prefixes at
+# subscribe time, we fabricate "A.topic-a" entries in MetadataResponses.
+#
+# realPrefix = "B"  (the mirror prefix that actually exists on this cluster)
+# fabricatedPrefix = "A"  (the prefix to inject so regex sees both variants)
+
+filterDefinitions:
+  - name: fabricate-mirror-metadata
+    type: MetadataResponseFabrication
+    config:
+      realPrefix: "B"
+      fabricatedPrefix: "A"
+
+management:
+  endpoints:
+    prometheus: {}
+
+virtualClusters:
+  - name: my-cluster
+    targetCluster:
+      bootstrapServers: kafka-cluster-a-bootstrap:9092
+    gateways:
+      - name: default
+        sniHostIdentifiesNode:
+          bootstrapAddress: kafka.example.com:9092
+          advertisedBrokerAddressPattern: broker-$(nodeId).kafka.example.com
+        tls:
+          key:
+            storeFile: /opt/kroxylicious/tls/tls.p12
+            storePassword:
+              passwordFile: /opt/kroxylicious/tls/store-password
+            storeType: PKCS12
+    filters:
+      - fabricate-mirror-metadata
