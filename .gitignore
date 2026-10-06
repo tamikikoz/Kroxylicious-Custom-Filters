@@ -1,5 +1,4 @@
 target/
-*.jar
 .m2/
 jars/
 *.class

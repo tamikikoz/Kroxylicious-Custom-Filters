@@ -1,5 +1,6 @@
 package io.kroxylicious.filters.topicsuppression;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
@@ -38,7 +39,9 @@ public class TopicSuppressionFilter implements MetadataRequestFilter {
             FilterContext context) {
 
         if (request.topics() != null && (hasDenyRules || hasAllowRules)) {
-            request.topics().removeIf(t -> shouldSuppress(t.name()));
+            var filtered = new ArrayList<>(request.topics());
+            filtered.removeIf(t -> shouldSuppress(t.name()));
+            request.setTopics(filtered);
         }
 
         return context.forwardRequest(header, request);
